@@ -86,6 +86,7 @@ async def fetch_filing_document(client: httpx.AsyncClient, url: str) -> str:
     """Fetch the raw HTML of a filing document."""
     resp = await client.get(url, headers=HEADERS)
     resp.raise_for_status()
+    resp.encoding = "utf-8"
     return resp.text
 
 @dataclass
@@ -123,32 +124,49 @@ def extract_item_1a(html: str) -> ExtractionResult:
         tag.decompose()
     text = soup.get_text(separator=" ").replace("\xa0", " ")
     text = re.sub(r"\s+", " ", text)
-    
+
+    # CHECK FIRST: does this filing incorporate Item 1A by reference?
+    # If the Item 1A header is immediately followed by reference language,
+    # the risk factors are in a separate exhibit, not this document.
+    item_1a_header = re.search(r"item\s*1a\.?\s*risk\s*factors", text, re.IGNORECASE)
+    if item_1a_header:
+        following = text[item_1a_header.end():item_1a_header.end() + 250].lower()
+        ref_phrases = [
+            "incorporated by reference",
+            "incorporated herein by reference",
+            "can be found in this report under",
+            "information in response to this item",
+        ]
+        if any(p in following for p in ref_phrases):
+            return ExtractionResult(status="incorporated_by_reference",
+                                    flags=["incorporated_by_reference"])
+
     header_pattern = re.compile(
         r"(item\s*1a\.?\s*)?risk\s*factors\s*[\.\:\u201d\"]?\s+(?=[A-Z])",
         re.IGNORECASE,
     )
     end_pattern = re.compile(
-        r"item\s*1b\.?\s*unresolved"
-        r"|item\s*2\.?\s*properties"
-        r"|item\s*3\.?\s*legal\s*proceedings"
-        r"|unresolved\s*staff\s*comments"
-        r"|form\s*10-k\s*cross\s*reference",
+        r"(?:item\s*)?1b\.?\s*unresolved\s*staff\s*comments"
+        r"|(?:item\s*)?1c\.?\s*cybersecurity"
+        r"|(?:item\s*)?2\.?\s*properties"
+        r"|(?:item\s*)?3\.?\s*legal\s*proceedings"
+        r"|form\s*10-k\s*cross\s*reference\s*index",
         re.IGNORECASE,
     )
-    
-    def is_cross_reference(text: str, header_match) -> bool:
+
+    def is_cross_reference(text, header_match):
         had_item_prefix = bool(re.match(r"item\s*1a", header_match.group(), re.IGNORECASE))
         if had_item_prefix:
             return False
         after = text[header_match.end():header_match.end() + 40].lower()
         pointer_phrases = ["section", "above", "below", "of this form", "discussed"]
-        return any (p in after for p in pointer_phrases)
-    
-    def is_toc_entry(text: str, header_start: int) -> bool:
+        return any(p in after for p in pointer_phrases)
+
+    def is_toc_entry(text, header_start):
         after = text[header_start:header_start + 40]
-        return bool(re.match(r"\s*(item\s*1a\.?\s*)?risk\s*factors\s*\d{1,4}\s+item\s*1b", after, re.IGNORECASE))
-    
+        return bool(re.match(r"\s*(item\s*1a\.?\s*)?risk\s*factors\s*\d{1,4}\s+item\s*1b",
+                             after, re.IGNORECASE))
+
     candidates = []
     for m in header_pattern.finditer(text):
         start_idx = m.end()
@@ -161,7 +179,7 @@ def extract_item_1a(html: str) -> ExtractionResult:
         section = text[start_idx:end_idx].strip()
         if len(section) > 2000:
             candidates.append((start_idx, section))
-            
+
     if candidates:
         candidates.sort(key=lambda c: c[0])
         section = candidates[0][1]
@@ -172,12 +190,65 @@ def extract_item_1a(html: str) -> ExtractionResult:
         tail = section[-200:].lower()
         if "cross reference" in tail:
             flags.append("possible_toc_overrun_at_end")
-        return ExtractionResult(status="extracted", text=section, length=length, flags=flags)
-    
+        return ExtractionResult(status="extracted", text=section,
+                                length=length, flags=flags)
+
     if _detect_incorporation_by_reference(text):
-        return ExtractionResult(status="incorporated_by_reference", flags=["incorporated_by_reference"])
-    
+        return ExtractionResult(status="incorporated_by_reference",
+                                flags=["incorporated_by_reference"])
+
     return ExtractionResult(status="not_found", flags=["no_section_found"])
+
+ARCHIVE_URL = "https://data.sec.gov/submissions/{filename}"
+
+async def fetch_archived_filings(client: httpx.AsyncClient, filename: str) -> list[dict]:
+    """
+    Fetch one archived submissions file and return its 10-K filings.
+    """
+    url = ARCHIVE_URL.format(filename=filename)
+    resp = await client.get(url, headers=HEADERS)
+    resp.raise_for_status()
+    data = resp.json()
+    
+    forms = data["form"]
+    accession_number = data["accessionNumber"]
+    filing_dates = data["filingDate"]
+    primary_docs = data["primaryDocument"]
+    
+    results = []
+    for i, form in enumerate(forms):
+        if form.strip().replace("\xa0", " ") == "10-K":
+            results.append({
+                "accession_number": accession_number[i],
+                "filed_date": filing_dates[i],
+                "primary_document": primary_docs[i],
+            })
+    return results
+
+async def fetch_all_10k_filings(client: httpx.AsyncClient, submissions: dict, target_count: int = 3) -> list[dict]:
+    """
+    Get up to target_count of the most recent 10-K filings, walking both
+    the recent array and archived files as needed.
+
+    Stops fetching archive files as soon as target_count 10-Ks are found,
+    so a high-volume filer like JPM costs only a few extra requests.
+    """
+    tenks = extract_10k_filings(submissions)
+    
+    if len(tenks) >= target_count:
+        return tenks[:target_count]
+    
+    files = submissions["filings"].get("files", [])
+    for file_entry in files:
+        if len(tenks) >= target_count:
+            break
+        
+        archived = await fetch_archived_filings(client, file_entry["name"])
+        await asyncio.sleep(RATE_LIMIT_DELAY)
+        tenks.extend(archived)
+        
+    tenks.sort(key=lambda f: f["filed_date"], reverse=True)
+    return tenks[:target_count]
 
 async def main():
     """Validation run: resolve a few tickers and list their 10-K filings."""

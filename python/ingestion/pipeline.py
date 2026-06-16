@@ -7,6 +7,7 @@ from ingestion.edgar import (
     fetch_ticker_to_cik_map, fetch_filing_history,
     extract_10k_filings, build_filing_url,
     fetch_filing_document, extract_item_1a,
+    fetch_all_10k_filings,
 )
 from ingestion.store import upsert_company, upsert_filing
 from ingestion.sp500_subset import SP500_SUBSET
@@ -41,7 +42,7 @@ async def ingest_ticker(
     submissions = await fetch_filing_history(client, cik)
     await asyncio.sleep(RATE_LIMIT_DELAY)
     
-    tenks = extract_10k_filings(submissions)
+    tenks = await fetch_all_10k_filings(client, submissions, target_count=max_filings)
     if not tenks:
         return {"ticker": ticker, "status": "no_10k", "filings_stored": 0}
     
@@ -90,7 +91,6 @@ async def ingest_ticker(
         "filings_stored": stored,
         "quality": quality_summary,
     }
-
 
 async def ingest_all(max_filings: int = 3):
     """
@@ -174,19 +174,14 @@ async def main():
     db = SessionLocal()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            print("Fetching SEC ticker map...")
             ticker_map = await fetch_ticker_to_cik_map(client)
             await asyncio.sleep(RATE_LIMIT_DELAY)
-            print(f"Loaded {len(ticker_map)} tickers\n")
-            result = await ingest_ticker(client, db, "AAPL", ticker_map, max_filings=3)
-            print(f"Ticker: {result['ticker']}")
-            print(f"Status: {result['status']}")
-            print(f"Stored: {result['filings_stored']} filings\n")
+            result = await ingest_ticker(client, db, "JPM", ticker_map, max_filings=3)
+            print(f"\n{result['ticker']}: {result['status']}, stored={result['filings_stored']}")
             for q in result.get("quality", []):
-                print(f" {q['filed']} {q['status']:8} "
-                      f"{q['length']:>8,} chars flags={q['flags']}")
+                print(f" {q['filed']} {q['status']:25} {q['length']:>8,} chars")
     finally:
         db.close()
         
 if __name__ == "__main__":
-    asyncio.run(ingest_all(max_filings=3))
+    asyncio.run(ingest_all(max_filings = 3))
