@@ -10,6 +10,7 @@ from ingestion.edgar import (
     assess_extraction_quality,
 )
 from ingestion.store import upsert_company, upsert_filing
+from ingestion.sp500_subset import SP500_SUBSET
 
 async def ingest_ticker(
     client: httpx.AsyncClient,
@@ -89,36 +90,78 @@ async def ingest_ticker(
         "filings_stored": stored,
         "quality": quality_summary,
     }
-    
-async def diagnose_old_aapl():
-    import re
-    from bs4 import BeautifulSoup
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        ticker_map = await fetch_ticker_to_cik_map(client)
-        await asyncio.sleep(RATE_LIMIT_DELAY)
-        cik = ticker_map["AAPL"]["cik"]
-        submissions = await fetch_filing_history(client, cik)
-        await asyncio.sleep(RATE_LIMIT_DELAY)
-        tenks = extract_10k_filings(submissions)
+
+async def ingest_all(max_filings: int = 3):
+    """
+    Ingest the full SP500 subset. Reports a summary at the end including
+    extraction quality stats.
+    """    
+    db = SessionLocal()
+    results = []
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            print("Fetching SEC ticker map...")
+            ticker_map = await fetch_ticker_to_cik_map(client)
+            await asyncio.sleep(RATE_LIMIT_DELAY)
+            print(f"Loaded {len(ticker_map)} tickers\n")
+            
+            for i, (ticker, sector) in enumerate(SP500_SUBSET, 1):
+                try:
+                    result = await ingest_ticker(
+                        client, db, ticker, ticker_map, max_filings=max_filings
+                    )
+                    _set_sector(db, ticker, sector)
+                    results.append(result)
+                    print(f"[{i:2}/{len(SP500_SUBSET)}] {ticker:6}"
+                          f"{result['status']:10} stored={result['filings_stored']}")
+                except Exception as e:
+                    print(f"[{i:2}/{len(SP500_SUBSET)}] {ticker:6} ERROR: {e}")
+                    results.append({"ticker": ticker, "status": "error", "filings_stored": 0})
+    finally:
+        db.close()
         
-        filing = tenks[1]
-        url = build_filing_url(cik, filing["accession_number"], filing["primary_document"])
-        print(f"2024 filing URL: {url}")
-        print(f"Primary document: {filing['primary_document']}")
-        html = await fetch_filing_document(client, url)
-
-        soup = BeautifulSoup(html, "lxml")
-        for tag in soup(["script", "style"]):
-            tag.decompose()
-        text = soup.get_text(separator=" ").replace("\xa0", " ")
-        text = re.sub(r"\s+", " ", text)
-        print(f"Doc size: {len(html):,} html, {len(text):,} text")
-
-        for pat_name, pat in [("item 1a", r"item\s*1a"), ("risk factors", r"risk\s*factors")]:
-            matches = [m.start() for m in re.finditer(pat, text, re.IGNORECASE)]
-            print(f"\n'{pat_name}': {len(matches)} mentions")
-            for idx in matches[:8]:
-                print(f"  @ {idx}: ...{text[idx:idx+70]}...")    
+    _print_quality_report(results)
+    
+def _set_sector(db, ticker, sector):
+    from models import Company
+    company = db.query(Company).filter(Company.ticker == ticker.upper()).first()
+    if company:
+        company.sector = sector
+        db.commit()
+        
+def _print_quality_report(results):
+    print("\n" + "=" * 60)
+    print("INGESTION QUALITY REPORT")
+    print("=" * 60)
+    
+    total_filings = 0
+    clean = 0
+    flagged = 0
+    failed = 0
+    no_data = []
+    
+    for r in results:
+        if r["status"] not in ("ok",):
+            no_data.append(r['ticker'])
+            continue
+        for q in r.get("quality", []):
+            total_filings += 1
+            if q["status"] == "clean":
+                clean += 1
+            elif q["status"] == "flagged":
+                flagged += 1
+            else:
+                failed += 1
+                
+    print(f"Companies processed: {len(results)}")
+    print(f"Total filings: {total_filings}")
+    print(f"  Clean:   {clean}")
+    print(f"  Flagged: {flagged}")
+    print(f"  Failed:  {failed}")
+    if total_filings:
+        print(f"  Clean rate: {clean/total_filings*100:.1f}%")
+    if no_data:
+        print(f"Companies with no data: {', '.join(no_data)}")
     
 async def main():
     """Test the orchestrator on a single ticker, end to end."""
@@ -140,4 +183,4 @@ async def main():
         db.close()
         
 if __name__ == "__main__":
-    asyncio.run(diagnose_old_aapl())
+    asyncio.run(ingest_all(max_filings=3))

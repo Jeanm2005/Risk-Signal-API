@@ -92,9 +92,9 @@ def extract_item_1a(html: str) -> str | None:
         tag.decompose()
     text = soup.get_text(separator=" ").replace("\xa0", " ")
     text = re.sub(r"\s+", " ", text)
-
+    
     header_pattern = re.compile(
-        r"(item\s*1a\.?\s*)?risk\s*factors\s*[\.\:]?\s+(?=[A-Z])",
+        r"(item\s*1a\.?\s*)?risk\s*factors\s*[\.\:\u201d\"]?\s+(?=[A-Z])",
         re.IGNORECASE,
     )
     end_pattern = re.compile(
@@ -105,32 +105,41 @@ def extract_item_1a(html: str) -> str | None:
         r"|form\s*10-k\s*cross\s*reference",
         re.IGNORECASE,
     )
-
-    opener_signals = [
-        "the following", "our business", "we face", "investing in",
-        "you should carefully", "set forth", "described below",
-        "may be important", "could materially", "summarizes factors",
-        "carefully consider",
-    ]
-
+    
+    def is_cross_reference(text: str, header_end: int) -> bool:
+        window = text[max(0, header_end - 80):header_end + 80].lower()
+        ref_signals = [
+            "of this form", "under the heading", "see risk factors",
+            "refer to", "described in", "set forth in", "in the risk factors",
+        ]
+        return any(sig in window for sig in ref_signals)
+    
+    def is_toc_entry(text: str, header_end: int) -> bool:
+        after = text[header_end:header_end + 40]
+        return bool(re.match(r"\s*\d{1,4}\s+item\s*1b", after, re.IGNORECASE))
+    
     candidates = []
     for m in header_pattern.finditer(text):
         start_idx = m.end()
-        lookahead = text[start_idx:start_idx + 200].lower()
-        if not any(sig in lookahead for sig in opener_signals):
+        
+        if is_cross_reference(text, start_idx):
             continue
+        if is_toc_entry(text, m.start()):
+            continue
+        
         end_match = end_pattern.search(text, start_idx)
         end_idx = end_match.start() if end_match else len(text)
         section = text[start_idx:end_idx].strip()
         if len(section) > 2000:
             candidates.append((start_idx, section))
-
+            
     if not candidates:
         return None
-
+    
     candidates.sort(key=lambda c: c[0])
     return candidates[0][1]
-
+    
+    
 def assess_extraction_quality(section: str | None) -> dict:
     """
     Return a quality assessment for an extracted Item 1A section.
