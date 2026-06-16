@@ -7,6 +7,8 @@ import re
 from bs4 import BeautifulSoup
 import warnings
 from bs4 import XMLParsedAsHTMLWarning
+from dataclasses import dataclass, field
+
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 load_dotenv()
@@ -86,7 +88,36 @@ async def fetch_filing_document(client: httpx.AsyncClient, url: str) -> str:
     resp.raise_for_status()
     return resp.text
 
-def extract_item_1a(html: str) -> str | None:
+@dataclass
+class ExtractionResult:
+    """
+    Result of attempting to extract Item 1A from a filing.
+
+    status:
+      'extracted'                 - real risk factor text found inline
+      'incorporated_by_reference' - filing points to a separate exhibit
+      'not_found'                 - no recognizable section at all
+    """
+    status: str
+    text: str | None = None
+    length: int = 0
+    flags: list = field(default_factory=list)
+    
+def _detect_incorporation_by_reference(text: str) -> bool:
+    item_1a_pattern = re.compile(r"item\s*1a", re.IGNORECASE)
+    ref_phrases = [
+        "incorporated by reference",
+        "incorporated herein by reference",
+        "annual report to shareholders",
+        "information in response to this item",
+    ]
+    for m in item_1a_pattern.finditer(text):
+        window = text[m.start():m.start() + 300].lower()
+        if any(phrase in window for phrase in ref_phrases):
+            return True
+    return False
+
+def extract_item_1a(html: str) -> ExtractionResult:
     soup = BeautifulSoup(html, "lxml")
     for tag in soup(["script", "style"]):
         tag.decompose()
@@ -106,62 +137,47 @@ def extract_item_1a(html: str) -> str | None:
         re.IGNORECASE,
     )
     
-    def is_cross_reference(text: str, header_end: int) -> bool:
-        window = text[max(0, header_end - 80):header_end + 80].lower()
-        ref_signals = [
-            "of this form", "under the heading", "see risk factors",
-            "refer to", "described in", "set forth in", "in the risk factors",
-        ]
-        return any(sig in window for sig in ref_signals)
+    def is_cross_reference(text: str, header_match) -> bool:
+        had_item_prefix = bool(re.match(r"item\s*1a", header_match.group(), re.IGNORECASE))
+        if had_item_prefix:
+            return False
+        after = text[header_match.end():header_match.end() + 40].lower()
+        pointer_phrases = ["section", "above", "below", "of this form", "discussed"]
+        return any (p in after for p in pointer_phrases)
     
-    def is_toc_entry(text: str, header_end: int) -> bool:
-        after = text[header_end:header_end + 40]
-        return bool(re.match(r"\s*\d{1,4}\s+item\s*1b", after, re.IGNORECASE))
+    def is_toc_entry(text: str, header_start: int) -> bool:
+        after = text[header_start:header_start + 40]
+        return bool(re.match(r"\s*(item\s*1a\.?\s*)?risk\s*factors\s*\d{1,4}\s+item\s*1b", after, re.IGNORECASE))
     
     candidates = []
     for m in header_pattern.finditer(text):
         start_idx = m.end()
-        
-        if is_cross_reference(text, start_idx):
+        if is_cross_reference(text, m):
             continue
         if is_toc_entry(text, m.start()):
             continue
-        
         end_match = end_pattern.search(text, start_idx)
         end_idx = end_match.start() if end_match else len(text)
         section = text[start_idx:end_idx].strip()
         if len(section) > 2000:
             candidates.append((start_idx, section))
             
-    if not candidates:
-        return None
+    if candidates:
+        candidates.sort(key=lambda c: c[0])
+        section = candidates[0][1]
+        flags = []
+        length = len(section)
+        if length > 300000:
+            flags.append("suspiciously_long_possible_overrun")
+        tail = section[-200:].lower()
+        if "cross reference" in tail:
+            flags.append("possible_toc_overrun_at_end")
+        return ExtractionResult(status="extracted", text=section, length=length, flags=flags)
     
-    candidates.sort(key=lambda c: c[0])
-    return candidates[0][1]
+    if _detect_incorporation_by_reference(text):
+        return ExtractionResult(status="incorporated_by_reference", flags=["incorporated_by_reference"])
     
-    
-def assess_extraction_quality(section: str | None) -> dict:
-    """
-    Return a quality assessment for an extracted Item 1A section.
-    Used to flag questionable extractions for the data-quality report
-    rather than silently trusting them.
-    """
-    if section is None:
-        return {"status": "failed", "length": 0, "flags": ["no_section_found"]}
-    
-    flags = []
-    length = len(section)
-    
-    if length < 5000:
-        flags.append("suspiciously_short")
-    if length > 300000:
-        flags.append("suspiciously_long_possible_overrun")
-    tail = section[-200:].lower()
-    if "cross reference" in tail or re.search(r"\d+=\d+", tail):
-        flags.append("possible_toc_overrun_at_end")
-        
-    status = "clean" if not flags else "flagged"
-    return {"status": status, "length": length, "flags": flags}    
+    return ExtractionResult(status="not_found", flags=["no_section_found"])
 
 async def main():
     """Validation run: resolve a few tickers and list their 10-K filings."""

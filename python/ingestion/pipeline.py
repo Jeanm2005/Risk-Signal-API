@@ -7,7 +7,6 @@ from ingestion.edgar import (
     fetch_ticker_to_cik_map, fetch_filing_history,
     extract_10k_filings, build_filing_url,
     fetch_filing_document, extract_item_1a,
-    assess_extraction_quality,
 )
 from ingestion.store import upsert_company, upsert_filing
 from ingestion.sp500_subset import SP500_SUBSET
@@ -64,8 +63,9 @@ async def ingest_ticker(
             continue
         await asyncio.sleep(RATE_LIMIT_DELAY)
         
-        item_1a = extract_item_1a(html)
-        quality = assess_extraction_quality(item_1a)
+        result = extract_item_1a(html)
+        
+        text_to_store = result.text if result.status == "extracted" else None
         
         upsert_filing(
             db,
@@ -73,15 +73,15 @@ async def ingest_ticker(
             accession_number=filing["accession_number"],
             form_type="10-K",
             filed_date=filing["filed_date"],
-            raw_text=item_1a,
+            raw_text=text_to_store,
         )
         stored += 1
         quality_summary.append(
             {"accession": filing["accession_number"],
              "filed": filing["filed_date"],
-             "status": quality["status"],
-             "length": quality["length"],
-             "flags": quality["flags"]}
+             "status": result.status,
+             "length": result.length,
+             "flags": result.flags}
         )
         
     return {
@@ -90,6 +90,7 @@ async def ingest_ticker(
         "filings_stored": stored,
         "quality": quality_summary,
     }
+
 
 async def ingest_all(max_filings: int = 3):
     """
@@ -134,32 +135,37 @@ def _print_quality_report(results):
     print("INGESTION QUALITY REPORT")
     print("=" * 60)
     
-    total_filings = 0
-    clean = 0
-    flagged = 0
-    failed = 0
+    total = 0
+    extracted = 0
+    by_reference = 0
+    not_found = 0
+    flagged_long = 0
     no_data = []
     
     for r in results:
-        if r["status"] not in ("ok",):
-            no_data.append(r['ticker'])
+        if r is None or r.get("status") != "ok":
+            no_data.append(r["ticker"] if r else "unknown")
             continue
         for q in r.get("quality", []):
-            total_filings += 1
-            if q["status"] == "clean":
-                clean += 1
-            elif q["status"] == "flagged":
-                flagged += 1
+            total += 1
+            if q["status"] == "extracted":
+                extracted += 1
+                if q["flags"]:
+                    flagged_long += 1
+            elif q["status"] == "incorporated_by_reference":
+                by_reference += 1
             else:
-                failed += 1
+                not_found += 1
                 
     print(f"Companies processed: {len(results)}")
-    print(f"Total filings: {total_filings}")
-    print(f"  Clean:   {clean}")
-    print(f"  Flagged: {flagged}")
-    print(f"  Failed:  {failed}")
-    if total_filings:
-        print(f"  Clean rate: {clean/total_filings*100:.1f}%")
+    print(f"Total filings: {total}")
+    print(f"  Extracted inline:   {extracted}")
+    print(f"  (of which flagged for review: {flagged_long})")
+    print(f" Incorporated by reference:  {by_reference}")
+    print(f" Not found: {not_found}")
+    if total:
+        usable = extracted
+        print(f"  Usable extraction rate: {usable/total*100:.1f}%")
     if no_data:
         print(f"Companies with no data: {', '.join(no_data)}")
     
