@@ -16,7 +16,6 @@ class Company(Base):
     sic_code = Column(String(10))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     filings = relationship("Filing", back_populates="company")
-    news_articles = relationship("NewsArticle", back_populates="company")
     
 class Filing(Base):
     __tablename__ = "filings"
@@ -35,20 +34,26 @@ class Filing(Base):
 class NewsArticle(Base):
     __tablename__ = "news_articles"
     
-    id = Column(Integer, primary_key = True)
-    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"))
-    source = Column(String(50))
+    id = Column(Integer, primary_key=True)
+    url = Column(Text, unique=True, nullable=False)
     headline = Column(Text, nullable=False)
     body = Column(Text)
+    source = Column(String(100))
     published_at = Column(DateTime(timezone=True))
-    url = Column(Text, unique=True)
-    # Our FinBERT output (populated in Phase 2) — source of truth
     sentiment_label = Column(String(20))
     sentiment_score = Column(Float)
-    # Alpha Vantage's pre-computed sentiment — metadata for validation only
-    av_relevance = Column(Float)
-    av_sentiment_score = Column(String(20))
-    av_sentiment_label = Column(String(30))
+    processed = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    company = relationship("Company", back_populates="news_articles")
+    company_links = relationship("ArticleCompany", back_populates="article")
+    
+class ArticleCompany(Base):
+    __tablename__ = "article_companies"
+
+    id = Column(Integer, primary_key=True)
+    article_id = Column(Integer, ForeignKey("news_articles.id", ondelete="CASCADE"))
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    article = relationship("NewsArticle", back_populates="company_links")
+    company = relationship("Company")

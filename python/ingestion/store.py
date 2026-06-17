@@ -1,7 +1,7 @@
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 from datetime import datetime
-from models import Company, Filing, NewsArticle
+from models import Company, Filing, NewsArticle, ArticleCompany
 
 def upsert_company(db: Session, ticker: str, name: str, cik: str, sector: str = None, sic_code: str = None) -> int:
     """
@@ -77,3 +77,32 @@ def upsert_news_article(db: Session, company_id: int, headline: str, url: str,
     result = db.execute(stmt)
     db.commit()
     return result.scalar_one()
+
+def upsert_article(db: Session, url: str, headline: str, body: str = None,
+                   source: str = None, published_at=None) -> int:
+    """
+    Insert an article (or fetch existing) by unique URL. Returns article id.
+    Idempotent: re-running returns the same id without duplicating.
+    """
+    stmt = insert(NewsArticle).values(
+        url=url, headline=headline, body=body,
+        source=source, published_at=published_at,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["url"],
+        set_={"headline": headline},  # no-op update so RETURNING fires
+    ).returning(NewsArticle.id)
+    result = db.execute(stmt)
+    db.commit()
+    return result.scalar_one()
+
+
+def link_article_company(db: Session, article_id: int, company_id: int):
+    """
+    Link an article to a company. Idempotent on (article_id, company_id).
+    """
+    stmt = insert(ArticleCompany).values(
+        article_id=article_id, company_id=company_id,
+    ).on_conflict_do_nothing(index_elements=["article_id", "company_id"])
+    db.execute(stmt)
+    db.commit()
