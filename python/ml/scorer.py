@@ -1,4 +1,5 @@
 import torch
+torch.set_num_threads(6)
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import nltk
 try:
@@ -39,7 +40,7 @@ def split_sentences(text: str, min_length: int = 20) -> list[str]:
     sentences = sent_tokenize(text)
     return [s.strip() for s in sentences if len(s.strip()) >= min_length]
 
-def score_document(text: str, batch_size: int = 16, max_sentences: int = 1000) -> dict:
+def score_document(text: str, batch_size: int = 32, max_sentences: int = 400) -> dict:
     """
     Score a full document (filing Item 1A or news article).
     Splits into sentences, scores each, aggregates into distribution features.
@@ -79,7 +80,7 @@ def score_document(text: str, batch_size: int = 16, max_sentences: int = 1000) -
         "mean_positive": sum(poss) / len(poss),
     }
 
-def score_sentences(sentences: list[str], batch_size: int = 16) -> list[dict]:
+def score_sentences(sentences: list[str], batch_size: int = 32) -> list[dict]:
     """
     Score a list of sentences with FinBERT.
     Returns one dict per sentence: {positive, negative, neutral}.
