@@ -1,7 +1,7 @@
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 from datetime import datetime
-from models import Company, Filing, NewsArticle, ArticleCompany
+from models import Company, Filing, NewsArticle, ArticleCompany, RiskScore
 
 def upsert_company(db: Session, ticker: str, name: str, cik: str, sector: str = None, sic_code: str = None) -> int:
     """
@@ -106,3 +106,16 @@ def link_article_company(db: Session, article_id: int, company_id: int):
     ).on_conflict_do_nothing(index_elements=["article_id", "company_id"])
     db.execute(stmt)
     db.commit()
+    
+def store_filing_score(db: Session, company_id: int, features: dict, model_version: str = "finbert-base"):
+    """Store a filing's FinBERT feature vector as a risk score record."""
+    score = RiskScore(
+        company_id=company_id,
+        risk_score=features["mean_negative"],
+        confidence=features.get("max_negative"),
+        signal_breakdown=features,
+        model_version=model_version,
+    )
+    db.add(score)
+    db.commit()
+    return score.id

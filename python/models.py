@@ -4,6 +4,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from db import Base
+from sqlalchemy.dialects.postgresql import JSONB
 
 class Company(Base):
     __tablename__ = "companies"
@@ -57,3 +58,16 @@ class ArticleCompany(Base):
 
     article = relationship("NewsArticle", back_populates="company_links")
     company = relationship("Company")
+    
+class RiskScore(Base):
+    __tablename__ = "risk_scores"
+    
+    id = Column(Integer, primary_key=True)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"))
+    scored_at = Column(DateTime(timezone=True), server_default=func.now())
+    risk_score = Column(Float, nullable=False)
+    confidence = Column(Float)
+    signal_breakdown = Column(JSONB)
+    model_version = Column(String(50))
+    company = relationship("Company")
+    filing_id = Column(Integer, ForeignKey("filings.id", ondelete="CASCADE"))
