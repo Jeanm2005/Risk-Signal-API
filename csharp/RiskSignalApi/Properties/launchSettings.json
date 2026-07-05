@@ -1,0 +1,11 @@
+{
+    "profiles": {
+        "RiskSignalApi": {
+            "commandName": "Project",
+            "applicationUrl": "http://locahhost:5000",
+            "environmentVariables": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            }
+        }
+    }
+}

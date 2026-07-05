@@ -28,6 +28,12 @@ builder.Services.AddSingleton<PostgresService>();
 
 var app = builder.Build();
 
+// Serve the static demo page (wwwroot/index.html) BEFORE the auth gate, so the page
+// itself is public while /score stays protected. The page collects the API key from
+// the user rather than embedding it -- client-side code is public, so no secret lives here.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // API-key gate (skips /health and /parity). Registered before endpoints so it runs first.
 app.UseMiddleware<ApiKeyMiddleware>();
 
