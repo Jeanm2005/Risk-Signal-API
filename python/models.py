@@ -71,3 +71,32 @@ class RiskScore(Base):
     model_version = Column(String(50))
     company = relationship("Company")
     filing_id = Column(Integer, ForeignKey("filings.id", ondelete="CASCADE"))
+
+class FilingLabel(Base):
+    __tablename__ = "filing_labels"
+
+    id = Column(Integer, primary_key=True)
+    filing_id = Column(Integer, ForeignKey("filings.id", ondelete="CASCADE"), unique=True,  nullable=False)
+    realized_vol = Column(Float)          # annualized; NULL if not computable  
+    vol_label = Column(String(10))        # 'low' / 'medium' / 'high'; NULL if no vol
+    window_start = Column(Date)           # first trading day used (t+1)
+    window_end = Column(Date)             # filed_date + 30 calendar days
+    n_returns = Column(Integer)           # daily returns actually used
+    price_source = Column(String(20))     # 'yfinance'
+    tercile_low = Column(Float)           # 1/3 quantile at labeling time (provenance)
+    tercile_high = Column(Float)          # 2/3 quantile at labeling time (provenance)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+ 
+    filing = relationship("Filing")
+
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id = Column(Integer, primary_key=True)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"))
+    triggered_at = Column(DateTime(timezone=True), server_default=func.now())
+    alert_type = Column(String(50))
+    severity = Column(String(20))
+    explanation = Column(Text)
+    resolved = Column(Boolean, default=False)
+    company = relationship("Company")

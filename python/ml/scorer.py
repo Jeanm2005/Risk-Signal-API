@@ -1,32 +1,35 @@
 import torch
-torch.set_num_threads(6)
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import nltk
-try:
-    nltk.data.find("tokenizers/punkt")
-except LookupError:
-    nltk.download("punkt")
-try:
-    nltk.data.find("tokenizers/punk_tab")
-except LookupError:
-    nltk.download("punkt_tab")
+
+for _pkg in ("punkt", "punkt_tab"):
+    try:
+        nltk.data.find(f"tokenizers/{_pkg}")
+    except LookupError:
+        nltk.download(_pkg)
 
 from nltk.tokenize import sent_tokenize
 
 MODEL_NAME = "ProsusAI/finbert"
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+if DEVICE == "cpu":
+    torch.set_num_threads(6)
+
 _tokenizer = None
 _model = None
 
 def load_model():
-    """Load FinBERT once and cache it. CPU inference."""
+    """Load FinBERT once and cache it on DEVICE"""
     global _tokenizer, _model
     if _model is None:
-        print(f"Loading {MODEL_NAME}...")
+        print(f"Loading {MODEL_NAME} on {DEVICE}...")
         _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
         _model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
+        _model.to(DEVICE)
         _model.eval()
-        print("Loaded. Label map:", _model.config.id2label)
+        print(f"Loaded on {DEVICE}. Label map:", _model.config.id2label)
     return _tokenizer, _model
 
 def split_sentences(text: str, min_length: int = 20) -> list[str]:
@@ -40,9 +43,9 @@ def split_sentences(text: str, min_length: int = 20) -> list[str]:
     sentences = sent_tokenize(text)
     return [s.strip() for s in sentences if len(s.strip()) >= min_length]
 
-def score_document(text: str, batch_size: int = 32, max_sentences: int = 400) -> dict:
+def score_document(text: str, batch_size: int = 64, max_sentences: int = 400) -> dict:
     """
-    Score a full document (filing Item 1A or news article).
+    Score a full document.
     Splits into sentences, scores each, aggregates into distribution features.
 
     Returns the feature dict that feeds risk_scores and the Isolation Forest.
@@ -61,16 +64,16 @@ def score_document(text: str, batch_size: int = 32, max_sentences: int = 400) ->
     capped = len(sentences) > max_sentences
     if capped:
         sentences = sentences[:max_sentences]
-    
+
     scores = score_sentences(sentences, batch_size=batch_size)
     negs = [s["negative"] for s in scores]
     poss = [s["positive"] for s in scores]
     neus = [s["neutral"] for s in scores]
-    
-    # Risk density: fraction of sentences that are strongly negative
+
+    # Risk density
     HIGH_NEG = 0.5
     high_neg_count = sum(1 for n in negs if n >= HIGH_NEG)
-    
+
     return {
         "n_sentences": len(sentences),
         "mean_negative": sum(negs) / len(negs),
@@ -78,16 +81,17 @@ def score_document(text: str, batch_size: int = 32, max_sentences: int = 400) ->
         "risk_density": high_neg_count / len(negs),
         "mean_neutral": sum(neus) / len(neus),
         "mean_positive": sum(poss) / len(poss),
+        "capped": capped,
     }
 
-def score_sentences(sentences: list[str], batch_size: int = 32) -> list[dict]:
+def score_sentences(sentences: list[str], batch_size: int = 64) -> list[dict]:
     """
-    Score a list of sentences with FinBERT.
-    Returns one dict per sentence: {positive, negative, neutral}.
+    Score a list of texts with FinBERT. Each text is classified independently.
+    Returns one dict per input text: {positive, negative, neutral}.
     """
     tokenizer, model = load_model()
     results = []
-    
+
     for i in range(0, len(sentences), batch_size):
         batch = sentences[i:i + batch_size]
         inputs = tokenizer(
@@ -96,17 +100,18 @@ def score_sentences(sentences: list[str], batch_size: int = 32) -> list[dict]:
             truncation=True,
             max_length=512,
             return_tensors="pt",
-        )
+        ).to(DEVICE)
         with torch.no_grad():
             logits = model(**inputs).logits
             probs = torch.softmax(logits, dim=1)
-            
-        for row in probs:
-            results.append({
-                "positive": float(row[0]),
-                "negative": float(row[1]),
-                "neutral": float(row[2]),
-            })
+
+            probs = probs.cpu()
+            for row in probs:
+                results.append({
+                    "positive": float(row[0]),
+                    "negative": float(row[1]),
+                    "neutral": float(row[2]),
+                })
     return results
 
 if __name__ == "__main__":
@@ -122,6 +127,6 @@ if __name__ == "__main__":
     print("\nDocument-level features:")
     for k, v in features.items():
         if isinstance(v, float):
-            print(f"  {k}: {v:.3f}")
+            print(f" {k}: {v:.3f}")
         else:
-            print(f"  {k}: {v}")
+            print(f" {k}: {v}")
