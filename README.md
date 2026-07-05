@@ -5,8 +5,7 @@ news, scores them with a transformer sentiment model (FinBERT), and serves calib
 risk scores through an authenticated C# API — with the exported model **provably
 identical** to the Python original.
 
-Along the way it does something most portfolio ML projects don't: it **rigorously
-tests, and largely refutes, its own core hypothesis** (that filing risk-language
+It **rigorously tests, and largely refutes, its own core hypothesis** (that filing risk-language
 predicts stock volatility), finds where signal *actually* lives, and reports the
 result honestly instead of overclaiming.
 
