@@ -1,0 +1,43 @@
+name: CI
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    python:
+        name: Python tests
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: python
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-python@v5
+              with:
+                python-version: "3.12"
+
+            - name: Install test dependencies
+              run: pip install -r requirements-dev.txt
+
+            - name: Run tests
+              run: python -m pytest -q
+
+    dotnet:
+        name: C# build
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: csharp/RiskSignalApi
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-dotnet@v4
+              with:
+                dotnet-version: "10.0.x"
+
+            - name: Restore
+              run: dotnet restore
+            - name: Build
+              run: dotnet build --no-restore -c Release

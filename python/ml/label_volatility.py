@@ -23,8 +23,7 @@ import math
 import time
 from datetime import timedelta
 import numpy as np
-from db import SessionLocal, Base, engine
-from models import Company, Filing, FilingLabel
+
 
 WINDOW_DAYS = 30
 MIN_RETURNS = 10          
@@ -120,6 +119,8 @@ def fetch_prices(tickers, start, end):
 
 # Orchestration
 def label_all_filings():
+    from models import Company, Filing, FilingLabel
+    from db import SessionLocal, Base, engine
     FilingLabel.__table__.drop(engine, checkfirst=True)
     Base.metadata.create_all(engine)
     db = SessionLocal()

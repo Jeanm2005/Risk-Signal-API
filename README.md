@@ -1,4 +1,5 @@
 # Risk Signal API
+![CI](https://github.com/Jeanm2005/Risk-Signal-API/actions/workflows/ci.yml/badge.svg)
 
 A production-style machine-learning service that ingests SEC filings and financial
 news, scores them with a transformer sentiment model (FinBERT), and serves calibrated

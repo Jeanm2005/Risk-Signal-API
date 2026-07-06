@@ -1,0 +1,7 @@
+# Lightweight deps for running the unit tests in CI (no torch, no DB, no network).
+# Kept separate from requirements.txt so the test job stays fast and installable on
+# a CPU-only runner. Versions match requirements.txt for reproducibility.
+pytest>=8,<10
+numpy==2.5.0
+pandas==3.0.3
+scipy==1.18.0

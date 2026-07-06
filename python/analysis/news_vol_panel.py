@@ -1,12 +1,9 @@
 import os
 from datetime import timedelta
- 
 import numpy as np
 import pandas as pd
 from scipy import stats
- 
-from db import SessionLocal
-from models import Company, NewsArticle, ArticleCompany
+
  
 TRADING_DAYS = 252
 FWD = 5
@@ -209,6 +206,8 @@ def save_plot(panel, outdir="."):
  
  
 def main():
+    from models import Company, NewsArticle, ArticleCompany
+    from db import SessionLocal
     db = SessionLocal()
     try:
         news = load_news(db)
