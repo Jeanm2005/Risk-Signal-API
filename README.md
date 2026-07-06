@@ -48,7 +48,7 @@ holds the one-off statistical studies that decided *what* to build.
 
 ---
 
-## The signal investigation (the honest part)
+## The signal investigation
 
 The original premise was "risk-language in SEC filings predicts volatility." Rather than
 assume it, it was tested four ways. Volatility is 30-day realized vol measured strictly
@@ -119,6 +119,15 @@ curl http://localhost:5000/parity          # -> {"all_pass": true, ...}
 ```
 
 ---
+
+## Run with Docker
+
+'''bash
+docker compose up --build
+'''
+
+Brings up the API + PostgreSQL together. Browse to http://localhost:5000, and use the pre-seeded demo key `rsk_ddemo_container_key_public_local_only` as the `X-API-Key`.
+The ONNX model is mounted from `python/artifacts/` at runtime, not baked into the image.
 
 ## Tech stack
 
