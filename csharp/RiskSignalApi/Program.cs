@@ -10,7 +10,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 // --- Artifacts (copied next to the binary by the .csproj) ---
 string artifacts = Path.Combine(AppContext.BaseDirectory, "artifacts");
-var tokenizer = new TokenizerService(Path.Combine(artifacts, "vocab.txt"));
+string vocabPath = File.Exists(Path.Combine(artifacts, "vocab.txt"))
+    ? Path.Combine(artifacts, "vocab.txt")                       // flattened by local build
+    : Path.Combine(artifacts, "tokenizer", "vocab.txt");         // nested in mounted raw artifacts
+var tokenizer = new TokenizerService(vocabPath);
 var scorer = new ScoringService(Path.Combine(artifacts, "finbert.onnx"), tokenizer);
 string referencePath = Path.Combine(artifacts, "parity_reference.json");
 

@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: risk_signal_db
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d risk_signal_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "5433:5432"
+
+  api:
+    build:
+      context: ./csharp/RiskSignalApi
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RISK_DB_CONNECTION: "Host=postgres;Port=5432;Database=risk_signal_db;Username=postgres;Password=postgres"
+    volumes:
+      - ./python/artifacts:/app/artifacts:ro
+    ports:
+      - "5000:8080"
+
+volumes:
+  pgdata:
+  
