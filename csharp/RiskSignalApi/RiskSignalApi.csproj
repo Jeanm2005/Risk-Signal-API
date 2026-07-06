@@ -16,9 +16,9 @@
   <!-- Ship the exported model + vocab next to the binary so the API is self-contained.
        Adjust the source path if your artifacts/ folder lives elsewhere. -->
   <ItemGroup>
-    <None Include="..\..\python\artifacts\finbert.onnx" CopyToOutputDirectory="PreserveNewest" Link="artifacts\finbert.onnx" />
-    <None Include="..\..\python\artifacts\tokenizer\vocab.txt" CopyToOutputDirectory="PreserveNewest" Link="artifacts\vocab.txt" />
-    <None Include="..\..\python\artifacts\parity_reference.json" CopyToOutputDirectory="PreserveNewest" Link="artifacts\parity_reference.json" />
+    <None Include="..\..\python\artifacts\finbert.onnx" Condition="Exists('..\..\python\artifacts\finbert.onnx')" CopyToOutputDirectory="PreserveNewest" Link="artifacts\finbert.onnx" />
+    <None Include="..\..\python\artifacts\tokenizer\vocab.txt" Condition="Exists('..\..\python\artifacts\tokenizer\vocab.txt')" CopyToOutputDirectory="PreserveNewest" Link="artifacts\vocab.txt" />
+    <None Include="..\..\python\artifacts\parity_reference.json" Condition="Exists('..\..\python\artifacts\parity_reference.json')" CopyToOutputDirectory="PreserveNewest" Link="artifacts\parity_reference.json" />
   </ItemGroup>
 
 </Project>
