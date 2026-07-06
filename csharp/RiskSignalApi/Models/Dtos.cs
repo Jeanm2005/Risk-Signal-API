@@ -9,7 +9,6 @@ public sealed record ScoreResult(
     float RiskScore,
     int TokenCount);
 
-/// <summary>Shape of one prediction_logs row (see PostgresService.LogPredictionAsync for the mapping).</summary>
 public sealed record PredictionLog(
     string ModelVersion,
     string InputFeaturesJson,
@@ -18,3 +17,5 @@ public sealed record PredictionLog(
     string FeatureContributionsJson,
     int RuntimeMs,
     string InferenceBackend);
+
+public sealed record ApiKeyInfo(int Id, int? RequestsPerHour);

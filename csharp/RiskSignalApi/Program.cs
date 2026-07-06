@@ -8,41 +8,36 @@ using RiskSignalApi.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// --- Artifacts (copied next to the binary by the .csproj) ---
 string artifacts = Path.Combine(AppContext.BaseDirectory, "artifacts");
 string vocabPath = File.Exists(Path.Combine(artifacts, "vocab.txt"))
-    ? Path.Combine(artifacts, "vocab.txt")                       // flattened by local build
-    : Path.Combine(artifacts, "tokenizer", "vocab.txt");         // nested in mounted raw artifacts
+    ? Path.Combine(artifacts, "vocab.txt")                       
+    : Path.Combine(artifacts, "tokenizer", "vocab.txt");         
 var tokenizer = new TokenizerService(vocabPath);
 var scorer = new ScoringService(Path.Combine(artifacts, "finbert.onnx"), tokenizer);
 string referencePath = Path.Combine(artifacts, "parity_reference.json");
 
-// --- Postgres (connection string from config, env var, or localhost default) ---
-string connString =
-    builder.Configuration.GetConnectionString("Postgres")
-    ?? Environment.GetEnvironmentVariable("RISK_DB_CONNECTION")
-    ?? "Host=localhost;Port=5432;Database=risk_signal_db;Username=postgres;Password=postgres";
+string? connString =
+    Environment.GetEnvironmentVariable("RISK_DB_CONNECTION")
+    ?? builder.Configuration.GetConnectionString("Postgres");
+if (string.IsNullOrWhiteSpace(connString))
+    connString = "Host=localhost;Port=5432;Database=risk_signal_db;Username=postgres;Password=postgres";
 var dataSource = NpgsqlDataSource.Create(connString);
 
 builder.Services.AddSingleton(tokenizer);
 builder.Services.AddSingleton(scorer);
 builder.Services.AddSingleton(dataSource);
 builder.Services.AddSingleton<PostgresService>();
+builder.Services.AddSingleton<RateLimiter>();
 
 var app = builder.Build();
 
-// Serve the static demo page (wwwroot/index.html) BEFORE the auth gate, so the page
-// itself is public while /score stays protected. The page collects the API key from
-// the user rather than embedding it -- client-side code is public, so no secret lives here.
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-// API-key gate (skips /health and /parity). Registered before endpoints so it runs first.
 app.UseMiddleware<ApiKeyMiddleware>();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
-// --- Scoring (protected) ---
 app.MapPost("/score", async (ScoreRequest req, ScoringService svc, PostgresService pg) =>
 {
     if (string.IsNullOrWhiteSpace(req.Text))
@@ -52,7 +47,6 @@ app.MapPost("/score", async (ScoreRequest req, ScoringService svc, PostgresServi
     ScoreResult result = svc.Score(req.Text);
     sw.Stop();
 
-    // Best-effort logging: a logging failure must not fail the scoring request.
     try
     {
         string inputFeatures = JsonSerializer.Serialize(new
@@ -80,7 +74,7 @@ app.MapPost("/score", async (ScoreRequest req, ScoringService svc, PostgresServi
     return Results.Ok(result);
 });
 
-// --- Parity self-test (open): tokenizer parity AND runtime parity, separately ---
+
 app.MapGet("/parity", () =>
 {
     if (!File.Exists(referencePath))
