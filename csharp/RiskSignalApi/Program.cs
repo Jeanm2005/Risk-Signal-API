@@ -33,10 +33,51 @@ var app = builder.Build();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
-
 app.UseMiddleware<ApiKeyMiddleware>();
 
+app.MapPost("/keys/demo", async (HttpContext ctx, PostgresService pg, RateLimiter limiter) =>
+{
+    string ip = ctx.Request.Headers.TryGetValue("X-Forwarded-For", out var fwd) && fwd.Count > 0
+        ? fwd.ToString().Split(',')[0].Trim()
+        : ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    var decision = limiter.CheckNamed($"mint:{ip}", limit: 5, window: TimeSpan.FromHours(24),
+                                      DateTimeOffset.UtcNow);
+    if (!decision.Allowed)
+    {
+        ctx.Response.Headers["Retry-After"] = decision.RetryAfterSeconds?.ToString() ?? "3600";
+        return Results.Json(new { error = "Too many demo keys requested from your network. Try again later." },
+                            statusCode: StatusCodes.Status429TooManyRequests);
+    }
+
+    var (raw, expiresAt) = await pg.CreateDemoKeyAsync(requestsPerHour: 30, ttl: TimeSpan.FromHours(24));
+    return Results.Ok(new
+    {
+        apiKey = raw,
+        expiresAt,
+        requestsPerHour = 30,
+        note = "Demo key: scoped to /score, ~30 requests/hour, expires in 24h. Store it now."
+    });
+});
+
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+app.MapGet("/alerts", async (PostgresService pg, string? severity, string? ticker, int? limit) =>
+{
+    int lim = Math.Clamp(limit ?? 50, 1, 200);
+    string? sev = string.IsNullOrWhiteSpace(severity) ? null : severity.ToLowerInvariant();
+    string? tk = string.IsNullOrWhiteSpace(ticker) ? null : ticker.ToUpperInvariant();
+    var alerts = await pg.GetAlertsAsync(sev, tk, lim);
+    return Results.Ok(alerts);
+});
+
+app.MapGet("/risk/{ticker}", async (PostgresService pg, string ticker) =>
+{
+    var detail = await pg.GetRiskDetailAsync(ticker.ToUpperInvariant(), headlinesPerAlert: 5);
+    return detail is null
+        ? Results.NotFound(new { error = $"no company found for ticker '{ticker}'" })
+        : Results.Ok(detail);
+});
 
 app.MapPost("/score", async (ScoreRequest req, ScoringService svc, PostgresService pg) =>
 {
@@ -73,7 +114,6 @@ app.MapPost("/score", async (ScoreRequest req, ScoringService svc, PostgresServi
 
     return Results.Ok(result);
 });
-
 
 app.MapGet("/parity", () =>
 {
@@ -118,5 +158,7 @@ app.MapGet("/parity", () =>
 
     return Results.Ok(new { all_pass = allPass, tolerance = tol, samples = results });
 });
+
+app.MapFallbackToFile("index.html");
 
 app.Run();

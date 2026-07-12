@@ -6,17 +6,18 @@ namespace RiskSignalApi.Middleware;
 public sealed class ApiKeyMiddleware
 {
     private const string HeaderName = "X-API-Key";
-    private static readonly HashSet<string> OpenPaths =
-        new(StringComparer.OrdinalIgnoreCase) { "/health", "/parity" };
 
     private readonly RequestDelegate _next;
 
     public ApiKeyMiddleware(RequestDelegate next) => _next = next;
 
+    private static bool RequiresKey(HttpContext ctx) =>
+        HttpMethods.IsPost(ctx.Request.Method) &&
+        ctx.Request.Path.Equals("/score", StringComparison.OrdinalIgnoreCase);
+
     public async Task InvokeAsync(HttpContext ctx, PostgresService pg, RateLimiter limiter)
     {
-        string path = ctx.Request.Path.Value ?? string.Empty;
-        if (OpenPaths.Contains(path))
+        if (!RequiresKey(ctx))
         {
             await _next(ctx);
             return;
