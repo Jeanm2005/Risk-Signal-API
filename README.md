@@ -4,7 +4,7 @@ A financial NLP system that reads SEC filings and news for roughly 500 S&P compa
 
 It describes what happened. It does not predict prices and it does not give investment advice.
 
-![alt text](<Screenshot 2026-07-12 211530.png>)
+![Anomaly monitor with a grounded explanation](docs/screenshots/dashboard-explanation.png)
 
 What it does
 
@@ -12,7 +12,7 @@ The system flags 200 company-days as statistically unusual (32 high severity, 15
 
 The Accenture example above is representative. The detector flagged 2026-06-18 because the absolute return was 4.3 sigma above normal for Accenture, news volume was 3.9 sigma high, and negative sentiment was elevated. The explanation layer read that day's headlines and attributed the move to a Q3 earnings report that missed revenue expectations and cut full-year guidance, plus a $4.18 billion cybersecurity acquisition. Each claim cites the specific article it came from, and each citation was verified to exist in the database before the explanation was stored.
 
-![alt text](<Screenshot 2026-07-12 211615.png>)
+![AbbVie was flagged, but the headlines that day did not explain the flag, so no explanation was generated](docs/screenshots/abstention.png)
 
 Compare that to AbbVie in the same feed. It was flagged, but the news linked to it that day was about Iranian oil and SpaceX, nothing about AbbVie. The explanation layer refused to generate anything. That refusal is the intended behavior.
 
