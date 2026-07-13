@@ -10,6 +10,9 @@ __pycache__/
 python/.env
 mlflow.db
 mlruns/
+python/*.data
+python/sym_shape_infer_temp.onnx
+python/finbert-preprocessed.onnx
 
 # Secrets / config
 csharp/**/appsettings.Development.json

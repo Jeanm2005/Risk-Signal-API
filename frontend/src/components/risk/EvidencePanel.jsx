@@ -52,7 +52,7 @@ function ExplanationBlock({ narrative }) {
         {parts.map((p, i) =>
           /^\[id=/.test(p) ? (
             <span key={i} className="inline-block font-mono text-[10px] text-violet-300/90 bg-violet-500/10 rounded px-1 mx-0.5 align-middle">
-              {p.replace(/[[\]]/g, "").replace("id=", "#")}
+              {p.replace(/[[\]]/g, "").replace("/id=/g", "#").replace(/,\s*/g, " ")}
             </span>
           ) : (
             <span key={i}>{p}</span>

@@ -11,10 +11,15 @@ var builder = WebApplication.CreateBuilder(args);
 string artifacts = Path.Combine(AppContext.BaseDirectory, "artifacts");
 string vocabPath = File.Exists(Path.Combine(artifacts, "vocab.txt"))
     ? Path.Combine(artifacts, "vocab.txt")                       
-    : Path.Combine(artifacts, "tokenizer", "vocab.txt");         
+    : Path.Combine(artifacts, "tokenizer", "vocab.txt");        
+
+string modelFile = Environment.GetEnvironmentVariable("RISK_MODEL_FILE") ?? "finbert.onnx";
+string referenceFile = Environment.GetEnvironmentVariable("RISK_PARITY_REFERENCE")
+                       ?? "parity_reference.json";
+
 var tokenizer = new TokenizerService(vocabPath);
-var scorer = new ScoringService(Path.Combine(artifacts, "finbert.onnx"), tokenizer);
-string referencePath = Path.Combine(artifacts, "parity_reference.json");
+var scorer = new ScoringService(Path.Combine(artifacts, modelFile), tokenizer);
+string referencePath = Path.Combine(artifacts, referenceFile);
 
 string? connString =
     Environment.GetEnvironmentVariable("RISK_DB_CONNECTION")
@@ -33,6 +38,7 @@ var app = builder.Build();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
 app.UseMiddleware<ApiKeyMiddleware>();
 
 app.MapPost("/keys/demo", async (HttpContext ctx, PostgresService pg, RateLimiter limiter) =>

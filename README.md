@@ -1,194 +1,150 @@
-# Risk Signal API
-![CI](https://github.com/Jeanm2005/Risk-Signal-API/actions/workflows/ci.yml/badge.svg)
+Risk Signal API
 
-A production-style machine-learning service that ingests SEC filings and financial
-news, scores them with a transformer sentiment model (FinBERT), and serves calibrated
-risk scores through an authenticated C# API — with the exported model **provably
-identical** to the Python original.
+A financial NLP system that reads SEC filings and news for roughly 500 S&P companies, detects which companies are behaving abnormally, and explains why using the news that drove each flag. Every explanation is checked against the source data before it is shown, and the system produces nothing when it cannot verify a claim.
 
-It **rigorously tests, and largely refutes, its own core hypothesis** (that filing risk-language
-predicts stock volatility), finds where signal *actually* lives, and reports the
-result honestly instead of overclaiming.
+It describes what happened. It does not predict prices and it does not give investment advice.
 
----
+![alt text](<Screenshot 2026-07-12 211530.png>)
 
-## TL;DR
+What it does
 
-- **Pipeline:** EDGAR + news ingestion over 500 S&P companies → GPU FinBERT scoring →
-  PostgreSQL → distant-supervision volatility labels → unsupervised anomaly detection.
-- **Investigation:** four independent tests of "does financial text track market risk."
-  Filing risk-language (level **and** year-over-year change) shows **no** relationship
-  to realized volatility. Timely **news** sentiment and volume **do** co-move with
-  volatility (ρ ≈ 0.20, beta-controlled, on well-covered names).
-- **Serving:** FinBERT exported to ONNX, verified to match PyTorch to **1e-6**, served
-  by a C# / ASP.NET Core API with hashed API-key auth, request logging, and a
-  self-verifying parity endpoint.
+The system flags 200 company-days as statistically unusual (32 high severity, 152 medium, 16 low). For each flag it shows the anomaly features that triggered it, the news from that day ranked by negative sentiment, and a written explanation grounded in those headlines.
 
-The headline conclusion is itself a finding: **timeliness and coverage, not model
-sophistication, determine whether financial-text signal is real.**
+The Accenture example above is representative. The detector flagged 2026-06-18 because the absolute return was 4.3 sigma above normal for Accenture, news volume was 3.9 sigma high, and negative sentiment was elevated. The explanation layer read that day's headlines and attributed the move to a Q3 earnings report that missed revenue expectations and cut full-year guidance, plus a $4.18 billion cybersecurity acquisition. Each claim cites the specific article it came from, and each citation was verified to exist in the database before the explanation was stored.
 
----
+![alt text](<Screenshot 2026-07-12 211615.png>)
 
-## Architecture
+Compare that to AbbVie in the same feed. It was flagged, but the news linked to it that day was about Iranian oil and SpaceX, nothing about AbbVie. The explanation layer refused to generate anything. That refusal is the intended behavior.
 
-```
- ingestion            ml (pipeline)             serving
- ─────────            ─────────────             ───────
- EDGAR filings  ┐     FinBERT scorer (GPU)      ONNX export ──► finbert.onnx
- financial news ┼──►  ├─ filings → risk_scores       │              │
- 500 companies  ┘     ├─ news    → sentiment          │ parity gate  │ (1e-6)
-                      ├─ volatility labels             ▼              ▼
-                      └─ Isolation Forest ──► alerts   C# API: /score  (auth + logging)
-                                                               /parity (self-test)
-        PostgreSQL  ◄──────────── everything reads/writes here ──────────►
-```
+The finding that shaped the design:
 
-Two clearly separated Python layers: **`ml/`** is the production pipeline; **`analysis/`**
-holds the one-off statistical studies that decided *what* to build.
+Before building any of the serving infrastructure, I tested whether risk language in financial text actually predicts market volatility. Four separate tests:
 
----
+TestResultFiling risk-language level vs. realized volatilityNo relationship (rho = 0.09)Year-over-year change in filing risk languageNo relationship (rho = 0.004)News sentiment and volume co-moving with volatilityPositive, within-company rho = 0.154 across the universe, rising to roughly 0.20 to 0.22 for the 50 best-covered companies, controlling for betaNews leading volatilityNo relationship
 
-## The signal investigation
+Filing language does not predict volatility. It is boilerplate, it is written by lawyers, and by the time a 10-K is filed the market has already priced whatever it says. News sentiment does track volatility, but it moves with the market rather than ahead of it, which is what an efficient market should look like.
 
-The original premise was "risk-language in SEC filings predicts volatility." Rather than
-assume it, it was tested four ways. Volatility is 30-day realized vol measured strictly
-after each event, from adjusted daily prices; all correlations are Spearman and
-beta-controlled by standardizing **within each company**.
+That result is why this is a monitoring and explanation tool instead of a prediction tool. A signal that co-moves with volatility is useless for forecasting and genuinely useful for explaining. Building a price predictor on top of this data would mean claiming something the data does not support.
 
-| Test | What it asks | Result |
-|------|--------------|--------|
-| Filing risk-language **level** | Do higher-risk-language filings precede higher vol? | **Null** (ρ ≈ 0.09, ns) |
-| Filing risk-language **change** | Does a YoY *rise* in risk-language precede rising vol? | **Null** (ρ ≈ 0.00) |
-| **News** sentiment/volume **co-movement** | Does timely news track same-window vol? | **Positive** (within-company ρ = 0.15–0.22) |
-| News **lead** | Does today's news *predict* next week's vol? | **Null** (efficient-market prior holds) |
+Architecture
 
-Key numbers from the news co-movement panel (May–June 2026, ~9.5k company-days):
+SEC filings + news (500 S&P companies)
+        |
+        v
+  FinBERT scoring  ---------------->  PostgreSQL
+  (GPU, 33k+ articles)                    |
+        |                                 |
+        v                                 |
+  Isolation Forest anomaly detection      |
+  (per-company standardized features)     |
+        |                                 |
+        v                                 |
+  Grounded explanation layer  <-----------+
+  (LLM constrained to computed facts,
+   citations verified, abstains on failure)
+        |
+        v
+  C# ASP.NET Core API  -->  React dashboard
+  (ONNX inference, auth,
+   rate limiting, logging)
 
-- **Article volume** vs same-day |return|: within-company ρ = **+0.154** (p ≈ 3e-51),
-  positive for **74%** of companies.
-- On the **well-covered top-50** names (median 16 articles/day): sentiment ρ = **+0.202**,
-  volume ρ = **+0.220** (both p < 1e-8).
-- A **coverage sweep** shows the sentiment effect more than doubling as daily article
-  count rises (0.06 → 0.15), i.e. thin coverage — not a weak effect — capped the raw signal.
+Python handles ingestion, scoring, anomaly detection, and explanation. C# serves the model and the analysis. The two are connected by an ONNX export with a verification gate between them.
 
-**Takeaway:** annual filings are too boilerplate and too pre-priced to carry
-volatility signal; timely, well-covered news does. This contrast is the result.
+Engineering
 
-Figures are in [`python/analysis/`](python/analysis) (`news_vol_comovement.png`,
-`risk_vs_vol_scatter.png`, and the exported matrices).
+Cross-language model parity
 
----
+The model trains and exports in Python but serves in C#. A one-token tokenizer difference between the two would silently corrupt every score, and nothing in the output would look wrong.
 
-## The serving layer
+The export runs the same inputs through PyTorch and through the C# ONNX runtime and compares them. The maximum logit difference is 1.55e-06. The export script exits non-zero if that gate fails, and there is a live /parity endpoint that re-runs the check against the golden reference at request time.
 
-The model is trained/run in Python but served in C# — a realistic production split, and
-the place where subtle bugs hide (a tokenizer that drifts by one token silently corrupts
-every score). This project treats that boundary as a first-class correctness problem:
+Quantization that was measured and rejected
 
-- **ONNX export** (`ml/export_onnx.py`): FinBERT wrapped to emit raw logits, exported
-  FP32 with dynamic batch/sequence axes, then **gated** — inputs are run through both
-  PyTorch and ONNX Runtime and the export is rejected if logits diverge. Measured max
-  difference: **1.55e-6**.
-- **Golden reference:** the export writes `parity_reference.json` (token ids *and*
-  logits, stored separately) as the contract the C# side must reproduce.
-- **C# API** (`csharp/RiskSignalApi`): ONNX Runtime + a WordPiece tokenizer that
-  reproduces HuggingFace exactly. A **`/parity`** endpoint replays the golden reference
-  and reports tokenizer-parity and runtime-parity *separately*, so any divergence is
-  localized instantly. Result: all samples pass at ≤ 1e-6.
-- **Auth & observability:** `X-API-Key` middleware validated against **SHA-256-hashed**
-  keys (raw keys are never stored); every scored request is logged to `prediction_logs`
-  (text hash — not raw text — label, scores, latency, backend).
+To fit a free hosting tier I quantized the model to INT8. The file dropped from 418 MB to 105 MB, a 4x reduction, and on the six sample texts every predicted class matched.
 
-### API quickstart
+Six samples turned out to be a bad test. On a wider set of 30 realistic financial texts the quantized model flipped 4 predicted classes, a 13.3% disagreement rate, with a maximum probability shift of 0.53. It read "a major customer contract was renewed on less favorable terms" as positive where the FP32 model read it as negative.
 
-```bash
-# 1. mint a key (stores only its SHA-256)
-python -m tools.generate_api_key "my-client"
+The script refuses to write a deployable model when classes flip, so it exited non-zero and the INT8 model was not shipped. The measurement is in python/ml/quantize_onnx.py and the numbers are reproducible.
 
-# 2. run the API
-cd csharp/RiskSignalApi && dotnet run
+Grounded explanations
 
-# 3. score text
-curl -X POST http://localhost:5000/score \
-  -H "X-API-Key: rsk_..." -H "Content-Type: application/json" \
-  -d '{"text":"Shares plunged after the company slashed guidance and disclosed an SEC probe."}'
-# -> {"label":"negative","scores":{...},"riskScore":0.958,"tokenCount":15}
+The explanation layer does not ask an LLM what it thinks about a company. It hands the model only facts the system computed (the anomaly's sigma values, the company, the date, and that day's headlines with numeric IDs) and requires a citation for every claim.
 
-# 4. verify Python↔C# parity
-curl http://localhost:5000/parity          # -> {"all_pass": true, ...}
-```
+Four gates run on the response, and each one fails closed:
 
----
 
-## Run with Docker
+Parse. The response must be the JSON that was requested.
+Citations exist. Every cited article ID must be one that was actually provided.
+Faithfulness. Each sentence must lexically overlap the headline it cites.
+Policy. The system never recommends. Advice language ("buy", "outperform", "price target") is only permitted when it is attributed to a named source and cited, so "Evercore maintained an Outperform rating [id=5]" passes and "investors should buy" does not.
 
-'''bash
-docker compose up --build
-'''
 
-Brings up the API + PostgreSQL together. Browse to http://localhost:5000, and use the pre-seeded demo key `rsk_ddemo_container_key_public_local_only` as the `X-API-Key`.
-The ONNX model is mounted from `python/artifacts/` at runtime, not baked into the image.
+News headlines are scraped third-party text, which makes them a prompt injection surface. They travel in a labeled data block that the system prompt marks as content to analyze rather than instructions to follow, and the policy gate catches the effect of a successful injection at the output even if the model is fooled.
 
-## Tech stack
+On the 32 high-severity alerts, 19 explanations were generated and 13 abstained. The abstentions break down as 5 where the model itself declined because the headlines did not explain the flag, 5 caught by the faithfulness check, 2 blocked by the policy gate, and 1 with no headlines to ground on. The abstention rate is a feature. A false abstention is invisible to the user. A fabricated explanation with a citation that does not support it is the failure that destroys trust.
 
-**Python:** PyTorch, Transformers (FinBERT), ONNX / ONNX Runtime, scikit-learn
-(Isolation Forest), SQLAlchemy, pandas / scipy, yfinance.
-**C# / .NET 10:** ASP.NET Core minimal API, ONNX Runtime, `Microsoft.ML.Tokenizers`, Npgsql.
-**Data:** PostgreSQL. **Model:** ProsusAI/finbert. **GPU:** CUDA (RTX 50-series, cu128).
+An adversarial test suite covers fabricated citations, unfaithful claims, injected advice, malformed output, and missing citations. Each case must abstain.
 
----
+MLOps
 
-## Repository layout
+Every model export is tracked in MLflow with its parameters, the parity delta, and its artifacts. Failed exports are logged too, tagged as failures, before the process exits.
 
-```
+Promotion is a separate, gated step. promote.py registers the export as a new model version and moves the @production alias only if the run passed parity. A failing model still gets registered so the version history is complete, but the alias does not move and the script exits non-zero.
+
+Security
+
+Scoring is authenticated. API keys are stored as SHA-256 hashes, so a database dump yields no usable credentials. Request logs store a hash of the input text rather than the text itself. Per-key rate limiting uses a sliding one-hour window and returns 429 with a Retry-After header.
+
+Anyone can mint a demo key from the scoring page with no signup. Those keys are scoped to /score, capped at about 30 requests per hour, and expire after 24 hours. The minting endpoint is itself rate limited per IP so it cannot be flooded. The blast radius of a leaked demo key is one rate-limited text classifier for one day.
+
+Running it
+
+Docker, with the model mounted:
+
+bashdocker compose up
+
+The API comes up on port 5000 with Postgres alongside it. The ONNX model is not baked into the image; it is mounted read-only from python/artifacts/, so you need to run the export first:
+
+bashcd python
+pip install -r requirements.txt
+python ml/export_onnx.py     # writes finbert.onnx + parity_reference.json, gated on parity
+
+To run the API directly instead:
+
+bashcd csharp/RiskSignalApi
+export RISK_DB_CONNECTION="Host=localhost;Port=5432;Database=risk_signal_db;Username=postgres;Password=..."
+dotnet run
+
+The frontend builds into the API's static root:
+
+bashcd frontend
+npm install
+npm run build
+
+Limitations
+
+The API is not deployed to a public URL yet. It runs locally and in Docker.
+
+Rate limiting is in-memory, so it resets on restart and is per-instance. A multi-instance deployment would need a shared store.
+
+The database connection uses a broad role. Tightening it to least privilege is the obvious next hardening step.
+
+Expired demo keys are rejected but not deleted, so they accumulate as dead rows. A production version would sweep them.
+
+The anomaly detector runs on a fixed historical window. There is no live ingestion, so there is nothing to drift, which is why there is no drift monitoring.
+
+Repository layout
+
 python/
-  ingestion/        EDGAR + news ingestion, S&P universe
-  ml/               PRODUCTION pipeline: scorer, score_filings, score_news,
-                    label_volatility, anomaly_detect, export_onnx
-  analysis/         one-off studies: validate_signal(_change), news_vol_panel (+ figures)
-  tools/            generate_api_key
-  models.py db.py   SQLAlchemy schema (all tables defined in code) + engine
-csharp/RiskSignalApi/
-  Program.cs        endpoints + middleware wiring
-  Services/         TokenizerService, ScoringService, PostgresService
-  Middleware/       ApiKeyMiddleware
-  Models/           DTOs
-```
+  ml/           scoring, anomaly detection, ONNX export, quantization,
+                MLflow promotion, grounded explanation layer
+  analysis/     the four-way volatility investigation
+  tests/        unit tests, run in CI
+csharp/
+  RiskSignalApi/    ASP.NET Core API, ONNX inference, auth, rate limiting
+frontend/       React dashboard (Vite, Tailwind)
+db/             schema and migrations
 
-## Pipeline run order
+Stack
 
-```
-python -m ingestion.pipeline          # ingest filings + news
-python -m ml.score_filings            # FinBERT risk scores for filings
-python -m ml.score_news               # FinBERT sentiment for ~33k articles
-python -m ml.label_volatility         # distant-supervision vol labels
-python -m ml.anomaly_detect           # Isolation Forest -> alerts
-python -m ml.export_onnx              # export + parity gate + vocab.txt
-# then: cd csharp/RiskSignalApi && dotnet run
-```
-
----
-
-## Honest limitations
-
-- **Distant supervision.** Volatility labels are a *proxy*; both the risk score and the
-  label derive from public market perception, so associations partly reflect shared
-  reactions, not filing-text causation.
-- **Large-cap only.** Findings are on ~500 mega-caps, which are heavily pre-priced and
-  scrutinized. Signal may differ in small/mid-caps.
-- **Co-movement, not prediction.** News tracks *contemporaneous* volatility; it does not
-  lead it (consistent with efficient markets). No forecasting claim is made.
-- **Short news window.** The news dataset spans ~2 months, dense but limited in time.
-
-## Possible extensions
-
-- LoRA domain-adaptation of FinBERT on Financial PhraseBank (measured F1 lift), then
-  re-score news and test whether co-movement strengthens.
-- Rate limiting via `api_keys.requests_per_hour`; JWT auth (schema already provisioned).
-- Containerize the API (ONNX Runtime needs no CUDA/torch — the serving image is small).
-
----
-
-*This project prioritizes correctness and honest evaluation over a flashy result. The
-nulls are reported as prominently as the positive finding, because knowing where a
-signal isn't is as valuable as knowing where it is.*
+Python, FinBERT, ONNX Runtime, scikit-learn, MLflow, C# / ASP.NET Core, React, PostgreSQL, Docker, GitHub Actions.
