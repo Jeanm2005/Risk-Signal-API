@@ -97,6 +97,9 @@ Scoring is authenticated. API keys are stored as SHA-256 hashes, so a database d
 
 Anyone can mint a demo key from the scoring page with no signup. Those keys are scoped to /score, capped at about 30 requests per hour, and expire after 24 hours. The minting endpoint is itself rate limited per IP so it cannot be flooded. The blast radius of a leaked demo key is one rate-limited text classifier for one day.
 
+Live URL:
+https://risk-signal-api.fly.dev/
+
 Running it
 
 Docker, with the model mounted:
@@ -122,8 +125,6 @@ npm install
 npm run build
 
 Limitations
-
-The API is not deployed to a public URL yet. It runs locally and in Docker.
 
 Rate limiting is in-memory, so it resets on restart and is per-instance. A multi-instance deployment would need a shared store.
 
