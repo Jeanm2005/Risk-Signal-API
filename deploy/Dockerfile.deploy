@@ -1,0 +1,18 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY csharp/RiskSignalApi/RiskSignalApi.csproj ./
+RUN dotnet restore
+COPY csharp/RiskSignalApi/ ./
+RUN dotnet publish -c Release -o /app --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+WORKDIR /app
+COPY --from=build /app ./
+
+COPY python/artifacts/finbert.onnx            ./artifacts/finbert.onnx
+COPY python/artifacts/parity_reference.json   ./artifacts/parity_reference.json
+COPY python/artifacts/tokenizer/vocab.txt     ./artifacts/tokenizer/vocab.txt
+
+ENV ASPNETCORE_URLS=http://+:8080
+EXPOSE 8080
+ENTRYPOINT ["dotnet", "RiskSignalApi.dll"]

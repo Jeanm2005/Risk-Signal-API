@@ -1,0 +1,10 @@
+@"
+**/node_modules
+**/venv
+**/bin
+**/obj
+.git
+mlruns
+*.mlflow
+python/*.data
+"@ | Out-File -Encoding ascii .dockerignore
