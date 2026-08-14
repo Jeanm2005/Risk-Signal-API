@@ -35,3 +35,6 @@ python/analysis/*.csv
 #Frontend
 frontend/node_modules
 
+
+quant/build/
+quant/sample_prices.csv
