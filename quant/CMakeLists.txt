@@ -15,6 +15,7 @@ add_library(quant_core
     src/ms_garch.cpp
     src/backtest.cpp
     src/stats.cpp
+    src/volatility_regime_strategy.cpp
 )
 target_include_directories(quant_core PUBLIC include)
 target_link_libraries(quant_core PUBLIC Eigen3::Eigen)
@@ -34,9 +35,13 @@ if(GTest_FOUND)
         tests/test_ms_garch.cpp
         tests/test_backtest.cpp
         tests/test_stats.cpp
+        tests/test_volatility_regime_strategy.cpp
     )
     target_link_libraries(quant_tests PRIVATE quant_core GTest::gtest GTest::gtest_main)
     add_test(NAME quant_tests COMMAND quant_tests)
 else()
     message(STATUS "GTest not found via vcpkg yet -- run: vcpkg install gtest")
 endif()
+
+add_executable(quant_run_cycle src/run_cycle.cpp)
+target_link_libraries(quant_run_cycle PRIVATE quant_core)
