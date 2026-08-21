@@ -45,3 +45,6 @@ endif()
 
 add_executable(quant_run_cycle src/run_cycle.cpp)
 target_link_libraries(quant_run_cycle PRIVATE quant_core)
+
+add_executable(quant_run_trials src/run_trials.cpp)
+target_link_libraries(quant_run_trials PRIVATE quant_core)
