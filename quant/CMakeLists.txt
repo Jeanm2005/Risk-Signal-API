@@ -16,6 +16,7 @@ add_library(quant_core
     src/backtest.cpp
     src/stats.cpp
     src/volatility_regime_strategy.cpp
+    src/news_features.cpp
 )
 target_include_directories(quant_core PUBLIC include)
 target_link_libraries(quant_core PUBLIC Eigen3::Eigen)
@@ -36,6 +37,7 @@ if(GTest_FOUND)
         tests/test_backtest.cpp
         tests/test_stats.cpp
         tests/test_volatility_regime_strategy.cpp
+        tests/test_news_features.cpp
     )
     target_link_libraries(quant_tests PRIVATE quant_core GTest::gtest GTest::gtest_main)
     add_test(NAME quant_tests COMMAND quant_tests)
